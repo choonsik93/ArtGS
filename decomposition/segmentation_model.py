@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 from torch.nn import functional as F
 import numpy as np
 #import scene.tools as tools
@@ -33,117 +34,110 @@ class deformation_net():
         print("model aabb: ", self.aabb)
 
 
+
+
+
 class HexPlane(torch.nn.Module):
 
-    def __init__(self, cfg, device="cuda", bounds=1.0):
+    def __init__(self, args, cfg,bounds=1.0):
         super().__init__()
+        bounds = args.bounds
+        aabb = torch.tensor([[bounds, bounds, bounds],
+                             [-bounds, -bounds, -bounds]])
+        self.aabb = torch.nn.Parameter(aabb, requires_grad=False)
+        #self.grid_config = [args.planeconfig]
+        self.grid_config = args.planeconfig
+        self.multiscale_res_multipliers = args.multires
+        self.concat_features = True
+
+        self.W = args.net_width
+        self.D = args.defor_depth
+
         self.cfg = cfg
-        self.label_n_comp = cfg.model.label_n_comp
-        self.deform_n_comp = cfg.model.deform_n_comp
 
         self.matMode = [[0, 1], [0, 2], [1, 2]]
-        self.vecMode = [2, 1, 0]
 
         self.label_dim = cfg.model.max_part_num
         self.deform_dim = 7 * self.label_dim
-        self.voxel_grid = cfg.model.voxel_grid
-        self.time_grid = cfg.model.time_grid_init
         self.align_corners = cfg.model.align_corners
         self.init_scale = cfg.model.init_scale
         self.init_shift = cfg.model.init_shift
-        self.device = device
-        self.init_planes(self.device)
-        self.get_voxel_upsample_list()
-        self.deformation_net = deformation_net(self, bounds=bounds)
+        #self.device = device
+        #self.init_planes(self.device)
+        self.init_planes()
 
         self.deform_arg = {'gumbel': cfg.optim.gumbel, 'hard': cfg.optim.hard, 'tau': cfg.optim.tau, 'eval': cfg.optim.eval}
         self.time_source = None
-
-        #self.init_zero_deform()
-
-        """self.label_n_comp = [24, 24, 24]
-        self.deform_n_comp = 24
-        self.label_dim = 10
-        self.deform_dim = 9 * self.label_dim
-        self.gridSize = [64, 64, 64]
-        self.time_grid = 64
-        self.align_corners = True
-        self.init_scale = 0.1
-        self.init_shift = 0.0
-        self.device = "cuda"
-        self.matMode = [[0, 1], [0, 2], [1, 2]]
-        self.vecMode = [2, 1, 0]
-        self.init_planes(self.device)"""
 
     @property
     def get_aabb(self):
         return self.aabb[0], self.aabb[1]
 
-    def init_planes(self, device):
-        self.label_plane = self.init_one_triplane(
-            self.label_n_comp, self.voxel_grid, device
-        )
-        self.deform_plane = self.init_one_plane(
-            self.deform_n_comp, self.time_grid, device
-        )
-        self.label_basis_mat = torch.nn.Linear(sum(self.label_n_comp), self.label_dim, bias=False).to(device)
-        self.deform_basis_mat = torch.nn.Linear(self.deform_n_comp, self.deform_dim, bias=False).to(device)
-        self.part_shrink_matrix = torch.nn.Parameter(torch.eye(self.label_dim, device=self.device).requires_grad_(False))
+    def init_planes(self):
+        self.label_plane = self.init_one_triplane()
+        self.deform_plane = self.init_one_plane()
 
-    def init_one_plane(self, n_component, gridSize, device):
+        config = self.grid_config.copy()
+        out_dim = config["output_coordinate_dim"]
+        res_dim = len(self.multiscale_res_multipliers)
+
+        self.label_feature_out = [nn.Linear(3.0 * res_dim * out_dim), self.W]
+        for i in range(self.D - 1):
+            self.label_feature_out.append(nn.ReLU())
+            self.label_feature_out.append(nn.Linear(self.W, self.W))
+        self.label_feature_out.append(nn.ReLU())
+        self.label_feature_out.append(nn.Linear(self.W, self.label_dim))
+        self.label_feature_out = nn.Sequential(self.label_feature_out)
+
+        self.deform_feature_out = [nn.Linear(out_dim), self.W]
+        for i in range(self.D - 1):
+            self.deform_feature_out.append(nn.ReLU())
+            self.deform_feature_out.append(nn.Linear(self.W, self.W))
+        self.deform_feature_out.append(nn.ReLU())
+        self.deform_feature_out.append(nn.Linear(self.W, self.deform_dim))
+        self.deform_feature_out = nn.Sequential(self.deform_feature_out)
+
+    def init_one_plane(self):
         plane_coef = []
+        config = self.grid_config.copy()
+        out_dim = config["output_coordinate_dim"]
+        gridSize = config["resolution"][3]
         plane_coef.append(
             torch.nn.Parameter(
                 self.init_scale
                 * torch.randn(
-                    (1, n_component, gridSize, gridSize)
+                    (1, out_dim, gridSize, gridSize)
                 )
                 + self.init_shift
             )
         )
-        return torch.nn.ParameterList(plane_coef).to(device)
+        return torch.nn.ParameterList(plane_coef)
+        #return torch.nn.ParameterList(plane_coef).to(self.device)
     
-    def init_one_triplane(self, n_component, gridSize, device):
-        plane_coef = []
-        for i in range(len(self.vecMode)):
-            vec_id = self.vecMode[i]
-            mat_id_0, mat_id_1 = self.matMode[i]
-            plane_coef.append(
-                torch.nn.Parameter(
-                    self.init_scale
-                    * torch.randn(
-                        (1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])
+    def init_one_triplane(self):
+        grids = torch.nn.ParameterList()
+        for res in self.multiscale_res_multipliers:
+            config = self.grid_config.copy()
+            # upsample resolution for multires hexplane, last dimension is for time
+            config["resolution"] = [r * res for r in config["resolution"][:3]] + config["resolution"][3:]
+            gridSize = config["resolution"][0:3]
+            out_dim = config["output_coordinate_dim"]
+            plane_coef = []
+            for i in range(len(self.matMode)):
+                mat_id_0, mat_id_1 = self.matMode[i]
+                plane_coef.append(
+                    torch.nn.Parameter(
+                        self.init_scale
+                        * torch.randn(
+                            (1, out_dim, gridSize[mat_id_1], gridSize[mat_id_0])
+                        )
+                        + self.init_shift
                     )
-                    + self.init_shift
                 )
-            )
-        return torch.nn.ParameterList(plane_coef).to(device)
-    
-    def init_one_hexplane(self, n_component, gridSize, device):
-        plane_coef, line_time_coef = [], []
-
-        for i in range(len(self.vecMode)):
-            vec_id = self.vecMode[i]
-            mat_id_0, mat_id_1 = self.matMode[i]
-
-            plane_coef.append(
-                torch.nn.Parameter(
-                    self.init_scale
-                    * torch.randn(
-                        (1, n_component[i], gridSize[mat_id_1], gridSize[mat_id_0])
-                    )
-                    + self.init_shift
-                )
-            )
-            line_time_coef.append(
-                torch.nn.Parameter(
-                    self.init_scale
-                    * torch.randn((1, n_component[i], gridSize[vec_id], self.time_grid))
-                    + self.init_shift
-                )
-            )
-
-        return torch.nn.ParameterList(plane_coef).to(device), torch.nn.ParameterList(line_time_coef).to(device)
+            grid = torch.nn.ParameterList(plane_coef)
+            #grid = torch.nn.ParameterList(plane_coef).to(self.device)
+            grids.append(grid)
+        return grids
     
     def compute_labelfeature(self, xyz_sampled: torch.Tensor, frame_time: torch.Tensor, xyz_normalize=False, shrink=False) -> torch.Tensor:
 
@@ -163,32 +157,25 @@ class HexPlane(torch.nn.Module):
         # line_time_coord: (3, B, 1, 2) coordinates for spatial-temporal planes, where line_time_coord[:, 0, 0, :] = [[t, z], [t, y], [t, x]].
 
         plane_feat = []
-        for idx_plane in range(len(self.label_plane)):
-            # Spatial Plane Feature: Grid sampling on app plane[idx_plane] given coordinates plane_coord[idx_plane].
-            plane_feat.append(
-                F.grid_sample(
-                    self.label_plane[idx_plane],
-                    plane_coord[[idx_plane]],
-                    align_corners=self.align_corners,
-                ).view(-1, *xyz_sampled.shape[:1])
-            )
-
+        for i_res in range(len(self.label_plane)):
+            for idx_plane in range(len(self.label_plane[i_res])):
+                plane_feat.append(
+                    F.grid_sample(
+                        self.label_plane[i_res][idx_plane],
+                        plane_coord[[idx_plane]],
+                        align_corners=self.align_corners,
+                    ).view(-1, *xyz_sampled.shape[:1])
+                )
         plane_feat = torch.stack(plane_feat)
-        
-        inter = plane_feat
-        inter = inter.view(-1, inter.shape[-1])
-        inter = self.label_basis_mat(inter.T)  # Feature Projection
-        #if shrink:
-        #    inter = torch.matmul(inter, self.part_shrink_matrix)
-        return inter
+        label_feat = self.label_feature_out(plane_feat.T)
+        return label_feat
     
     def compute_deformfeature(self, source_time, target_time, shrink=False):
         B = source_time.shape[0]
         source_time = source_time.view(1, -1, 1, 1)
         target_time = target_time.view(1, -1, 1, 1)
 
-        time_coord = torch.cat((source_time, target_time), -1).detach()
-        #.view(1, -1, 1, 2) # (1, B, 1, 2)
+        time_coord = torch.cat((source_time, target_time), -1).detach() # (1, B, 1, 2)
         
         plane_feat = F.grid_sample(
             self.deform_plane[0],
@@ -196,10 +183,8 @@ class HexPlane(torch.nn.Module):
             align_corners=self.align_corners,
         )[0, :, :, 0] #.view(-1, 1) # (1, C, B, 1) -> (C, B)
 
-        deform = self.deform_basis_mat(plane_feat.T) # (C, B) -> (B, C) -> (B, K*9)
+        deform = self.deform_feature_out(plane_feat.T) # (C, B) -> (B, C) -> (B, K*9)
         deform = deform.reshape(B, -1, 7)
-        #if shrink:
-        #    deform = torch.matmul(deform.transpose(1, 2), self.part_shrink_matrix).transpose(1, 2)
         quaternion = torch.nn.functional.normalize(deform[:, :, 0:4], dim=-1)
         translation = deform[:, :,4:7]
 
@@ -228,15 +213,9 @@ class HexPlane(torch.nn.Module):
         _, quaternion, translation = self.compute_deformfeature(frame_time_source, frame_time_target)
         xyz_sampled_deform = quaternion_apply(quaternion, xyz_sampled[:, None, :]) + translation # [N, K, 3]
 
-        if eval is True:
-            _, label_ind = torch.max(label_raw, 1)
-            label = torch.eye(label_raw.shape[-1], dtype=label_raw.dtype, device=label_raw.device)[label_ind]
-        else:
-            if gumbel:
-                label = torch.nn.functional.gumbel_softmax(label_raw, tau=tau, hard=hard)
-            else:
-                label = torch.nn.functional.softmax(label_raw, dim=-1)
-        
+        deform_arg = {"gumbel": gumbel, "hard": hard, "tau": tau, "eval": eval}
+        label = self.label_feat_to_label(label_raw, deform_arg=deform_arg)
+
         xyz_sampled_deform = torch.sum(xyz_sampled_deform * label[:, :, None], 1) if merge else xyz_sampled_deform
 
         return xyz_sampled_deform, label_raw, label, quaternion, translation
@@ -272,7 +251,8 @@ class HexPlane(torch.nn.Module):
         total = reg(self.deform_plane[0])
         return total
 
-    def get_optparam_groups(self, cfg, lr_scale=1.0):
+    def get_optparam_groups(self, lr_scale=1.0):
+        cfg = self.cfg
         grad_vars = [
             {
                 "params": self.deform_plane,
@@ -281,7 +261,7 @@ class HexPlane(torch.nn.Module):
                 "name": "grid",
             },
             {
-                "params": self.deform_basis_mat.parameters(),
+                "params": self.deform_feature_out.parameters(),
                 "lr": lr_scale * cfg.lr_deform_nn,
                 "lr_org": cfg.lr_deform_nn,
             },
@@ -292,23 +272,7 @@ class HexPlane(torch.nn.Module):
                 "name": "grid",
             },
             {
-                "params": self.label_basis_mat.parameters(),
-                "lr": lr_scale * cfg.lr_label_nn,
-                "lr_org": cfg.lr_label_nn,
-            },
-        ]
-        return grad_vars
-
-    def get_labeloptparam_groups(self, cfg, lr_scale=1.0):
-        grad_vars = [
-            {
-                "params": self.label_plane,
-                "lr": lr_scale * cfg.lr_label_grid,
-                "lr_org": cfg.lr_label_grid,
-                "name": "grid",
-            },
-            {
-                "params": self.label_basis_mat.parameters(),
+                "params": self.label_feature_out.parameters(),
                 "lr": lr_scale * cfg.lr_label_nn,
                 "lr_org": cfg.lr_label_nn,
             },
@@ -328,73 +292,6 @@ class HexPlane(torch.nn.Module):
             if "mat" not in name:
                 parameter_list.append(param)
         return parameter_list
-    
-    def get_voxel_upsample_list(self):
-        upsample_list = self.cfg.model.upsample_list
-        voxel_grid_list = (
-            torch.round(
-                torch.exp(
-                    torch.linspace(
-                        np.log(self.cfg.model.voxel_grid_init),
-                        np.log(self.cfg.model.voxel_grid_final),
-                        len(upsample_list) + 1,
-                    )
-                )
-            ).long()
-        ).tolist()[1:]
-            
-        time_grid_list = (
-            torch.round(
-                torch.exp(
-                    torch.linspace(
-                        np.log(self.cfg.model.time_grid_init),
-                        np.log(self.cfg.model.time_grid_final),
-                        len(upsample_list) + 1,
-                    )
-                )
-            ).long()
-        ).tolist()[1:]
-        self.voxel_grid_list = voxel_grid_list
-        self.time_grid_list = time_grid_list
-    
-    @torch.no_grad()
-    def up_sampling_planes(self, plane_coef, res_target):
-        for i in range(len(self.vecMode)):
-            vec_id = self.vecMode[i]
-            mat_id_0, mat_id_1 = self.matMode[i]
-            plane_coef[i] = torch.nn.Parameter(
-                F.interpolate(
-                    plane_coef[i].data,
-                    size=(res_target[mat_id_1], res_target[mat_id_0]),
-                    mode="bilinear",
-                    align_corners=self.align_corners,
-                )
-            )
-        return plane_coef
-    
-    @torch.no_grad()
-    def up_sampling_plane(self, plane_coef, time_grid):
-        for i in range(1):
-            plane_coef[i] = torch.nn.Parameter(
-                F.interpolate(
-                    plane_coef[i].data,
-                    size=(time_grid, time_grid),
-                    mode="bilinear",
-                    align_corners=self.align_corners,
-                )
-            )
-        return plane_coef
-
-    @torch.no_grad()
-    def upsample_volume_grid(self, res_target, time_grid):
-        self.label_plane = self.up_sampling_planes(
-            self.label_plane, [res_target, res_target, res_target]
-        )
-        self.deform_plane = self.up_sampling_plane(
-            self.deform_plane, time_grid
-        )
-        self.time_grid = time_grid
-        self.voxel_grid = [res_target, res_target, res_target]
 
     def init_zero_deform(self):
 
