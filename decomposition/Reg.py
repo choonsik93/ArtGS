@@ -15,7 +15,7 @@ class DeformSymLoss(nn.Module):
 
     def forward(self, model):
         deform_diag = model.deform_plane[0][0, :, range(model.time_grid), range(model.time_grid)].transpose(1, 0)
-        deform_diag = model.deform_basis_mat(deform_diag).reshape(model.time_grid, -1, 7)
+        deform_diag = model.deform_feature_out(deform_diag).reshape(model.time_grid, -1, 7)
 
         gt_deform = torch.zeros_like(deform_diag)
         gt_deform[:, :, 0] = 1.0

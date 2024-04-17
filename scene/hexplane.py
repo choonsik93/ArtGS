@@ -79,7 +79,6 @@ def interpolate_ms_features(pts: torch.Tensor,
     coo_combs = list(itertools.combinations(
         range(pts.shape[-1]), grid_dimensions)
     )
-    print("coo_comp, grid_dimensions: ", coo_combs, grid_dimensions)
     if num_levels is None:
         num_levels = len(ms_grids)
     multi_scale_interp = [] if concat_features else 0.
@@ -88,7 +87,6 @@ def interpolate_ms_features(pts: torch.Tensor,
         interp_space = 1.
         for ci, coo_comb in enumerate(coo_combs):
             # interpolate in plane
-            print("ci, coo_comb, gri shape: ", ci, coo_comb, grid[ci].shape)
             feature_dim = grid[ci].shape[1]  # shape of grid[ci]: 1, out_dim, *reso
             interp_out_plane = (
                 grid_sample_wrapper(grid[ci], pts[..., coo_comb])
@@ -130,20 +128,16 @@ class HexPlaneField(nn.Module):
         for res in self.multiscale_res_multipliers:
             # initialize coordinate grid
             config = self.grid_config[0].copy()
-            print("grid config: ", config)
             # Resolution fix: multi-res only on spatial planes
             config["resolution"] = [
                 r * res for r in config["resolution"][:3]
             ] + config["resolution"][3:]
-            print("res: ", res)
-            print("config resolution: ", config["resolution"])
             gp = init_grid_param(
                 grid_nd=config["grid_dimensions"],
                 in_dim=config["input_coordinate_dim"],
                 out_dim=config["output_coordinate_dim"],
                 reso=config["resolution"],
             )
-            print("gp shape: ", gp[-1].shape)
             # shape[1] is out-dim - Concatenate over feature len for each scale
             if self.concat_features:
                 self.feat_dim += gp[-1].shape[1]

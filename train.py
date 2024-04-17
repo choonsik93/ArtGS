@@ -14,7 +14,7 @@ import os, sys
 import torch
 from random import randint
 from utils.loss_utils import l1_loss, ssim, l2_loss, lpips_loss
-from gaussian_renderer import render, network_gui
+from decomposition.gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
@@ -192,17 +192,15 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             viewspace_point_tensor_list.append(viewspace_point_tensor)
         
 
-        radii = torch.cat(radii_list,0).max(dim=0).values
+        radii = torch.cat(radii_list, 0).max(dim=0).values
         visibility_filter = torch.cat(visibility_filter_list).any(dim=0)
-        image_tensor = torch.cat(images,0)
-        gt_image_tensor = torch.cat(gt_images,0)
+        image_tensor = torch.cat(images, 0)
+        gt_image_tensor = torch.cat(gt_images, 0)
         # Loss
         # breakpoint()
-        Ll1 = l1_loss(image_tensor, gt_image_tensor[:,:3,:,:])
-
+        Ll1 = l1_loss(image_tensor, gt_image_tensor[:, :3, :, :])
         psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()
         # norm
-        
 
         loss = Ll1
         if stage == "fine" and hyper.time_smoothness_weight != 0:
@@ -211,7 +209,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             loss += tv_loss
         if opt.lambda_dssim != 0:
             ssim_loss = ssim(image_tensor,gt_image_tensor)
-            loss += opt.lambda_dssim * (1.0-ssim_loss)
+            loss += opt.lambda_dssim * (1.0 - ssim_loss)
         # if opt.lambda_lpips !=0:
         #     lpipsloss = lpips_loss(image_tensor,gt_image_tensor,lpips_model)
         #     loss += opt.lambda_lpips * lpipsloss

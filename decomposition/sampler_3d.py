@@ -81,7 +81,7 @@ class Sampler3D:
 
         self.vis = cfg.optim.vis
         self.vis_every = cfg.optim.vis_every
-        if self.vis:
+        if self.vis is True:
             vis_time_step = cfg.optim.vis_time_step
             deform_arg = self.deform_arg
             self.visualizer = TestVisualizer(self, time_step=vis_time_step, folder_name=self.logfolder,
@@ -155,7 +155,7 @@ class Sampler3D:
     
     @property
     def deform_arg(self):
-        deform_arg = {'gumbel': self.gumbel, 'hard': self.hard, 'tau': self.tau, 'eval': self.eval}
+        deform_arg = {'gumbel': self.gumbel, 'hard': self.hard, 'tau': self.tau * self.lr_factor, 'eval': self.eval}
         """if self.step > self.turn_to_softmax:
             deform_arg = {'gumbel': False, 'hard': self.hard, 'tau': self.tau, 'eval': self.eval}
             self.model.deform_arg = deform_arg"""
@@ -186,7 +186,7 @@ class Sampler3D:
         frame_time_source = self.time_set[self.source_idx]
         frame_time_all = self.time_set
         _, quaternion, translation = self.model.compute_deformfeature(frame_time_source.expand(frame_time_all.shape[0]),
-                                                                      frame_time_all, shrink=False)
+                                                                      frame_time_all)
         deform_all = torch.cat((quaternion, translation), -1)
         K = deform_all.shape[1]
         deform_all = deform_all.transpose(0, 1).reshape(K, -1) # [K, T*7]
@@ -215,7 +215,7 @@ class Sampler3D:
             xyzs_source = self.xyzs[emptiness_source, :]
             time_source = self.time_set[self.source_idx]
             frame_time_source = time_source * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
-            label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source, shrink=False) # [N, K]
+            label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source) # [N, K]
             _, label_ind = torch.max(label_raw, 1)
             debug_label = torch.eye(label_raw.shape[-1], dtype=label_raw.dtype, device=label_raw.device)[label_ind]
             count_label = torch.sum(debug_label, 0)
@@ -224,16 +224,22 @@ class Sampler3D:
             else:
                 deform_shrink_matrix[ind_1, -1] = 1
 
-            deform_weight = self.model.deform_basis_mat.weight.data.transpose(0, 1)
-            deform_weight_shape = deform_weight.shape
-            label_weight = self.model.label_basis_mat.weight.data.transpose(0, 1)
+            deform_weight = self.model.deform_feature_out[-1].weight.data.transpose(0, 1)
+            deform_bias = self.model.deform_feature_out[-1].bias.data
+            label_weight = self.model.label_feature_out[-1].weight.data.transpose(0, 1)
+            label_bias = self.model.label_feature_out[-1].bias.data
             
             label_weight = torch.matmul(label_weight, part_shrink_matrix)
-            deform_weight = torch.matmul(deform_weight.reshape(deform_weight_shape[0], -1, 7).transpose(1, 2), deform_shrink_matrix).transpose(1, 2)
-            deform_weight = deform_weight.reshape(deform_weight_shape[0], -1)
+            label_bias = torch.matmul(label_bias[None, :], part_shrink_matrix)[0]
+            deform_weight = torch.matmul(deform_weight.reshape(-1, K, 7).transpose(1, 2), deform_shrink_matrix).transpose(1, 2)
+            deform_weight = deform_weight.reshape(deform_weight.shape[0], -1)
+            deform_bias = torch.matmul(deform_bias.reshape(K, 7).transpose(0, 1), deform_shrink_matrix).transpose(0, 1)
+            deform_bias = deform_bias.reshape(-1)
 
-            self.model.deform_basis_mat.weight = nn.Parameter(deform_weight.transpose(0, 1))
-            self.model.label_basis_mat.weight = nn.Parameter(label_weight.transpose(0, 1))
+            self.model.deform_feature_out[-1].weight = nn.Parameter(deform_weight.transpose(0, 1))
+            self.model.deform_feature_out[-1].bias = nn.Parameter(deform_bias)
+            self.model.label_feature_out[-1].weight = nn.Parameter(label_weight.transpose(0, 1))
+            self.model.label_feature_out[-1].bias = nn.Parameter(label_bias)
 
             self.group_merge()
         else:
@@ -244,7 +250,7 @@ class Sampler3D:
         frame_time_source = self.time_set[self.source_idx]
         frame_time_all = self.time_set
         _, quaternion, translation = self.model.compute_deformfeature(frame_time_source.expand(frame_time_all.shape[0]),
-                                                                      frame_time_all, shrink=False)
+                                                                      frame_time_all)
         deform_all = torch.cat((quaternion, translation), -1)
         K = deform_all.shape[1]
         deform_all = deform_all.transpose(0, 1).reshape(K, -1) # [K, T*7]
@@ -270,7 +276,7 @@ class Sampler3D:
             xyzs_source = self.xyzs[emptiness_source, :]
             time_source = self.time_set[self.source_idx]
             frame_time_source = time_source * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
-            label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source, shrink=False) # [N, K]
+            label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source) # [N, K]
             _, label_ind = torch.max(label_raw, 1)
             debug_label = torch.eye(label_raw.shape[-1], dtype=label_raw.dtype, device=label_raw.device)[label_ind]
             count_label = torch.sum(debug_label, 0)
@@ -300,30 +306,38 @@ class Sampler3D:
         xyzs_source = self.xyzs[emptiness_source, :]
         time_source = self.time_set[self.source_idx]
         frame_time_source = time_source * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
-        label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source, shrink=False) # [N, K]
+        label_raw = self.model.compute_labelfeature(xyzs_source, frame_time_source) # [N, K]
         _, label_ind = torch.max(label_raw, 1)
-        debug_label = torch.eye(label_raw.shape[-1], dtype=label_raw.dtype, device=label_raw.device)[label_ind]
+
+        prev_label_dim = label_raw.shape[1]
+
+        debug_label = torch.eye(prev_label_dim, dtype=label_raw.dtype, device=label_raw.device)[label_ind]
         print(torch.sum(debug_label, 0))
         unique_label = torch.argwhere(torch.sum(debug_label, 0) > self.shrink_num_thresold)
         unique_label = unique_label.squeeze()
         if label_raw.shape[-1] == unique_label.shape[0]: 
             return
-        part_shrink_matrix = torch.zeros((label_raw.shape[-1], (unique_label.shape[0] + buffer)), device=self.device)
+        part_shrink_matrix = torch.zeros((prev_label_dim, (unique_label.shape[0] + buffer)), device=self.device)
         print("shrink size: ", part_shrink_matrix.shape)
         for i in range(unique_label.shape[0]):
             part_shrink_matrix[unique_label[i], i] = 1
 
-        deform_weight = self.model.deform_basis_mat.weight.data.transpose(0, 1)
-        deform_weight_shape = deform_weight.shape
-        label_weight = self.model.label_basis_mat.weight.data.transpose(0, 1)
+        deform_weight = self.model.deform_feature_out[-1].weight.data.transpose(0, 1)
+        deform_bias = self.model.deform_feature_out[-1].bias.data
+        label_weight = self.model.label_feature_out[-1].weight.data.transpose(0, 1)
+        label_bias = self.model.label_feature_out[-1].bias.data
         
         label_weight = torch.matmul(label_weight, part_shrink_matrix)
-        deform_weight = torch.matmul(deform_weight.reshape(deform_weight_shape[0], -1, 7).transpose(1, 2), part_shrink_matrix).transpose(1, 2)
-        deform_weight = deform_weight.reshape(deform_weight_shape[0], -1)
+        label_bias = torch.matmul(label_bias[None, :], part_shrink_matrix)[0]
+        deform_weight = torch.matmul(deform_weight.reshape(-1, prev_label_dim, 7).transpose(1, 2), part_shrink_matrix).transpose(1, 2)
+        deform_weight = deform_weight.reshape(deform_weight.shape[0], -1)
+        deform_bias = torch.matmul(deform_bias.reshape(prev_label_dim, 7).transpose(0, 1), part_shrink_matrix).transpose(0, 1)
+        deform_bias = deform_bias.reshape(-1)
 
-        with torch.no_grad():
-            self.model.deform_basis_mat.weight = nn.Parameter(deform_weight.transpose(0, 1))
-            self.model.label_basis_mat.weight = nn.Parameter(label_weight.transpose(0, 1))
+        self.model.deform_feature_out[-1].weight = nn.Parameter(deform_weight.transpose(0, 1))
+        self.model.deform_feature_out[-1].bias = nn.Parameter(deform_bias)
+        self.model.label_feature_out[-1].weight = nn.Parameter(label_weight.transpose(0, 1))
+        self.model.label_feature_out[-1].bias = nn.Parameter(label_bias)
     
     def get_sym_loss(self, deform):
         gt_deform = torch.zeros_like(deform)
@@ -335,116 +349,20 @@ class Sampler3D:
         loss_tv = self.tv_deform_loss_weight * self.lr_factor * self.model.TV_loss_deform(self.tvreg_s)
         loss_tv += self.tv_label_loss_weight * self.lr_factor * self.model.TV_loss_label(self.tvreg_s)
         return loss_tv
-    
-    def get_deform_regul_loss(self, deform, temperature=1.0):
-        loss = torch.sum((deform[:, :, None, :] - deform[:, None, :, :]) ** 2, -1)
-        iu = np.triu_indices(deform.shape[1], 1)
-        loss = loss[:, iu[0], iu[1]]
-        loss = torch.exp(-temperature * loss)
-        return torch.mean(loss)
-    
-    """def get_loss_chamfer(self, batch_idxs):
-        model = self.model
-
-        #batch_idxs = next(iter(self.dataloader)) if batch_idxs is None else batch_idxs
-        source_idxs = batch_idxs[0]
-        target_idxs = batch_idxs[1]
-
-        frame_time_source, frame_time_target = self.time_set[source_idxs], self.time_set[target_idxs]
-        gaussians_source = self.gaussians_all[self.source_idx]
-        gaussians_target = self.gaussians_all[target_idxs]
-        deform, quaternion, translation = model.compute_deformfeature(frame_time_source, frame_time_target, shrink=True)
-
-        label_feat = model.label_source
-        label = self.raw_label_to_vector(label_feat) # [N, K]
-
-        B = self.batch_size
-        K = quaternion.shape[1]
-        N = label.shape[0]
-        total_loss = 0.0
-        quaternion_concat = torch.sum(label[None, :, :, None] * quaternion[:, None, :, :], 2) # [:, N, K, :] x [B, :, K, 4] -> [B, N, 4]
-        translation_concat = torch.sum(label[None, :, :, None] * translation[:, None, :, :], 2)
-        xyzs_source_deform = pytorch3d.transforms.quaternion_apply(quaternion_concat, gaussians_source[None, :, :]) + translation_concat
-        loss, _ = chamfer_distance(xyzs_source_deform, gaussians_target)
-        total_loss += loss
-        return total_loss
-    
-    def get_regul_loss(self, batch_idxs):
-        model = self.model
-        decay_factor = self.lr_factor
-
-        #batch_idxs = next(iter(self.dataloader)) if batch_idxs is None else batch_idxs
-        source_idxs = batch_idxs[0]
-        target_idxs = batch_idxs[1]
-
-        total_loss = 0.0
-
-        frame_time_source, frame_time_target = self.time_set[source_idxs], self.time_set[target_idxs]
-
-        deform_source, _, _ = model.compute_deformfeature(frame_time_source, frame_time_source)
-        sym_loss = self.sym_loss_weight * decay_factor * self.get_sym_loss(deform_source)
-        total_loss += sym_loss
-
-        sym_loss = self.sym_loss_weight * decay_factor * self.symreg(model)
-        total_loss += sym_loss
-        
-        loss_tv = self.tv_deform_loss_weight * decay_factor * model.TV_loss_deform(self.tvreg_s)
-        total_loss += loss_tv
-
-        label_feat = model.label_source
-        label = self.raw_label_to_vector(label_feat) # [N, K]
-        nst_idx_flat = self.gaussian_source_nst_idx.reshape(-1) # [N, nst_idx] -> [N*nst_idx]
-        nst_label_target = label[nst_idx_flat, :].reshape(-1, self.num_nst_points, label.shape[-1]) # [N, nst_idx, K]
-        nst_label_target = F.softmax(nst_label_target, -1).detach()
-        nst_label_target = torch.mean(nst_label_target, 1) # [N, K]
-        adj_loss = self.nst_loss_weight * 1.0 * decay_factor * self.cross_loss(label, nst_label_target)
-        total_loss += adj_loss
-
-        return total_loss"""
-    
-    def get_regul_loss(self, batch_idxs=None):
-        model = self.model
-        decay_factor = self.lr_factor
-
-        total_loss = 0.0
-
-        sym_loss = self.sym_loss_weight * decay_factor * self.symreg(model)
-        total_loss += sym_loss
-        
-        loss_tv = self.tv_deform_loss_weight * decay_factor * model.TV_loss_deform(self.tvreg_s)
-        total_loss += loss_tv
-
-        emptiness_source = self.emptiness_all[self.source_idx]
-        xyzs_source = self.xyzs[emptiness_source, :]
-        frame_time_source = self.time_set[self.source_idx]
-
-        time_temp_input = frame_time_source * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
-        label_raw = model.compute_labelfeature(xyzs_source, time_temp_input, shrink=True) # [N, K]
-        
-        nst_idx_flat = self.source_nst_idx[self.source_idx].reshape(-1) # [N, nst_idx] -> [N*nst_idx]
-        nst_label_target = F.softmax(label_raw[nst_idx_flat, :], -1).detach().reshape(label_raw.shape[0], self.num_nst_points, label_raw.shape[1]) # [N, nst_idx, K]
-        nst_label_target = torch.mean(nst_label_target, 1) # [N, K]
-        adj_loss = self.nst_loss_weight * np.clip((1.0/decay_factor)**2, 1.0, 1000.0) * self.cross_loss(label_raw, nst_label_target)
-        total_loss += adj_loss
-
-        loss_consis = 1e-4 * self.cross_loss(label_raw, torch.argmax(label_raw, 1).detach())
-        total_loss += loss_consis
-
-        return total_loss
         
     def get_loss(self, batch_idxs=None):
 
         model = self.model
         decay_factor = self.lr_factor
 
-        if self.step == self.turn_to_softmax:
+        """if self.step == self.turn_to_softmax:
             self.gumbel = False
             self.hard = False
             print(self.deform_arg)
             #self.loss_mode = "chamfer"
             model.deform_arg = self.deform_arg
             if self.vis:
-                self.visualizer.deform_arg = self.deform_arg
+                self.visualizer.deform_arg = self.deform_arg"""
 
         batch_idxs = next(iter(self.dataloader)) if batch_idxs is None else batch_idxs
         source_idxs = batch_idxs[0]
@@ -454,11 +372,14 @@ class Sampler3D:
         emptiness_source = self.emptiness_all[self.source_idx]
         emptiness_target = self.emptiness_all[target_idxs]
         xyzs_source = self.xyzs[emptiness_source, :]
-        deform, quaternion, translation = model.compute_deformfeature(frame_time_source, frame_time_target, shrink=True)
+        deform, quaternion, translation = model.compute_deformfeature(frame_time_source, frame_time_target)
 
         time_temp_input = frame_time_source[0] * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
-        label_raw = model.compute_labelfeature(xyzs_source, time_temp_input, shrink=True) # [N, K]
+        label_raw = model.compute_labelfeature(xyzs_source, time_temp_input) # [N, K]
         valid_labels = self.raw_label_to_vector(label_raw) # [N, K]
+
+        batch_time_target = frame_time_target[0] * torch.ones((xyzs_source.shape[0], 1), device=self.device) # [N, 1]
+        soft_deform = model.compute_soft_deformfeature(xyzs_source, batch_time_target)
 
         if self.loss_mode == "voxel":
             xyzs_source_deform = pytorch3d.transforms.quaternion_apply(quaternion[:, :, None, :], xyzs_source[None, None, :, :]) \
@@ -470,6 +391,7 @@ class Sampler3D:
             grid_shape = emptiness_source.shape
 
             points_3d = xyzs_source_deform # [B, K, N, 3]
+            points_3d = points_3d + soft_deform[None, None, :, :]
             points_3d = points_3d.reshape(B*K, N, 3)
             points_features = valid_labels.transpose(0, 1).unsqueeze(0).repeat(B, 1, 1).reshape(B*K, N, 1) # [B*K, N, 1]
             volume_densities = torch.zeros((B*K, 1, *grid_shape), device=model.device)
@@ -557,8 +479,16 @@ class Sampler3D:
         loss_tv = self.tv_deform_loss_weight * decay_factor * model.TV_loss_deform(self.tvreg_s)
         total_loss += loss_tv
 
+        """loss_tv = self.tv_deform_loss_weight * decay_factor * model.TV_loss_soft_deform(self.tvreg_s)
+        total_loss += loss_tv"""
+
         loss_tv = self.tv_label_loss_weight * decay_factor * model.TV_loss_label(self.tvreg_s) #(1.0/decay_factor)**3
         total_loss += loss_tv
+
+        if self.step < 5000:
+            loss_soft_deform_regul = 1e2 * self.l1_loss(soft_deform, torch.zeros_like(soft_deform))
+            #loss_soft_deform_regul = 1e0 / decay_factor * torch.mean(torch.sum(soft_deform ** 2, -1))
+            total_loss += loss_soft_deform_regul
 
         """if self.step > 5000:
             loss_tv = self.tv_label_loss_weight * 1000.0 * model.TV_loss_label(self.tvreg_s) 
@@ -581,14 +511,14 @@ class Sampler3D:
         # Initialize the optimizer
         beta1 = 0.9
         beta2 = 0.99
-        grad_vars = model.get_optparam_groups(self.cfg.optim, lr_scale=1.0)
+        grad_vars = model.get_optparam_groups(lr_scale=1.0)
         optimizer = torch.optim.Adam(grad_vars, betas=(beta1, beta2))
         l1_loss = torch.nn.L1Loss()
 
         total_loss = 1.0
         while total_loss > 1e-3:
             deform_all = model.deform_plane[0][0, :, :, :].reshape(-1, model.time_grid * model.time_grid)
-            deform_all = model.deform_basis_mat(deform_all.T).reshape(model.time_grid * model.time_grid, -1, 7)
+            deform_all = model.deform_feature_out(deform_all.T).reshape(model.time_grid * model.time_grid, -1, 7)
             gt_deform = torch.zeros_like(deform_all)
             gt_deform[:, :, 0] = 1.0
             total_loss = l1_loss(deform_all - gt_deform, torch.zeros_like(deform_all))

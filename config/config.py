@@ -59,7 +59,7 @@ class Optim_Config:
     beta1: float = 0.9
     beta2: float = 0.99
     lr_decay_type: str = "linear"  # choose from "exp" or "cosine" or "linear" 
-    lr_decay_target_ratio: float = 0.01 #0.01
+    lr_decay_target_ratio: float = 1.0 #0.01
     ############################### 0.01
     lr_decay_step: int = -1
     lr_decay_ratio: float = 0.1
@@ -82,10 +82,10 @@ class Optim_Config:
     sym_loss_weight: float = 1e-4
     tv_label_loss_weight: float = 1e-4 #1e-6 # 0.1# 0.0001 # voxel for 0.1
     ###################################### 1e-4
-    tv_deform_loss_weight: float = 1e-4 # 1e-5
+    tv_deform_loss_weight: float = 1e-0 #1e-4 # 1e-5
     recon_loss_weight: float = 1e-4
     diag_loss_weight: float = 0.0001
-    nst_loss_weight: float = 0.01 #1.0 #1 #0.0001 #1.0 #001 #1.0
+    nst_loss_weight: float = 0.0 #0.01 #0.01 #1.0 #1 #0.0001 #1.0 #001 #1.0
     ######################################### 0.001!!!!!!!!
     ### original value is 0.01 and adj_loss_version: 5
     ### o.1 is not bad

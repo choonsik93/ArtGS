@@ -330,12 +330,57 @@ class HexPlane(torch.nn.Module):
             total = total + reg(self.soft_deform_plane[idx]) + reg2(self.soft_deform_plane[idx + 1])
         return total
     
+    def get_optparam_groups(self, lr_scale=1.0):
+        cfg = self.cfg
+        grad_vars = [
+            {
+                "params": self.deform_plane,
+                "lr": lr_scale * cfg.optim.lr_deform_grid,
+                "lr_org": cfg.optim.lr_deform_grid,
+                "name": "grid",
+            },
+            {
+                "params": self.deform_feature_out.parameters(),
+                "lr": lr_scale * cfg.optim.lr_deform_nn,
+                "lr_org": cfg.optim.lr_deform_nn,
+            },
+            {
+                "params": self.soft_deform_plane,
+                "lr": lr_scale * cfg.optim.lr_deform_grid,
+                "lr_org": cfg.optim.lr_deform_grid,
+                "name": "grid",
+            },
+            {
+                "params": self.soft_deform_feature_out.parameters(),
+                "lr": lr_scale * cfg.optim.lr_deform_nn,
+                "lr_org": cfg.optim.lr_deform_nn,
+            },
+            {
+                "params": self.label_plane,
+                "lr": lr_scale * cfg.optim.lr_label_grid,
+                "lr_org": cfg.optim.lr_label_grid,
+                "name": "grid",
+            },
+            {
+                "params": self.label_feature_out.parameters(),
+                "lr": lr_scale * cfg.optim.lr_label_nn,
+                "lr_org": cfg.optim.lr_label_nn,
+            },
+        ]
+        return grad_vars
+    
     def get_mlp_parameters(self):
-        parameter_list = [self.deform_feature_out, self.label_feature_out]
+        parameter_list = []
+        for name, param in self.named_parameters():
+            if "mat" in name:
+                parameter_list.append(param)
         return parameter_list
     
     def get_grid_parameters(self):
-        parameter_list = [self.deform_plane, self.label_plane]
+        parameter_list = []
+        for name, param in self.named_parameters():
+            if "mat" not in name:
+                parameter_list.append(param)
         return parameter_list
 
     def init_zero_deform(self):
