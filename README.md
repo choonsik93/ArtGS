@@ -14,6 +14,7 @@ conda create -n artgs python=3.9
 conda activate artgs
 conda install pytorch=2.1.0 torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
 conda install -c iopath iopath
+conda install pytorch3d -c pytorch3d
 ```
 
 ## Data Preparation
