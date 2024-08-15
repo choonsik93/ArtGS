@@ -7,6 +7,7 @@ git submodule init
 git submodule update
 make build-image
 make run
+```
 
 ## Data Preparation
 
