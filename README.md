@@ -19,5 +19,10 @@ The dataset provided in [D-NeRF](https://github.com/albertpumarola/D-NeRF) is us
 For training synthetic scenes such as `bouncingballs`, run
 
 ```
-python train.py -s data/dnerf/bouncingballs --port 6017 --expname "dnerf/bouncingballs" --configs arguments/dnerf/bouncingballs.py 
+python train.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --configs arguments/dnerf/bouncingballs.py 
+```
+
+```
+python generate_mesh.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --m "output/dnerf/bouncingballs"
+python render.py -m <path to pre-trained model> -s <path to COLMAP dataset> 
 ```
