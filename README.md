@@ -23,6 +23,6 @@ python train.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --co
 ```
 
 ```
-python generate_mesh.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --m "output/dnerf/bouncingballs"
+python generate_mesh.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --model_path "output/dnerf/bouncingballs"
 python render.py -m <path to pre-trained model> -s <path to COLMAP dataset> 
 ```
