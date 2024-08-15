@@ -9,6 +9,13 @@ make build-image
 make run
 ```
 
+```bash
+conda create -n artgs python=3.9
+conda activate artgs
+conda install pytorch=2.1.0 torchvision pytorch-cuda=11.8 -c pytorch -c nvidia
+conda install -c iopath iopath
+```
+
 ## Data Preparation
 
 The dataset provided in [D-NeRF](https://github.com/albertpumarola/D-NeRF) is used. You can download the dataset from [dropbox](https://www.dropbox.com/s/0bf6fl0ye2vz3vr/data.zip?dl=0).
