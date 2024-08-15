@@ -15,7 +15,10 @@ conda activate artgs
 conda install pytorch=2.1.0 torchvision pytorch-cuda=12.4 -c pytorch -c nvidia
 conda install pytorch torchvision torchaudio pytorch-cuda=12.4 -c pytorch -c nvidia
 conda install -c iopath iopath
+pip install -r requirements.txt
 pip install "git+https://github.com/facebookresearch/pytorch3d.git"
+pip install -e submodules/depth-diff-gaussian-rasterization
+pip install -e submodules/simple-knn
 ```
 
 ## Data Preparation
