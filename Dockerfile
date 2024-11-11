@@ -19,4 +19,7 @@ RUN pip install torch==2.1.0 torchvision==0.16.0 --index-url https://download.py
 RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0 qt5-default
 
 RUN python -m pip install --upgrade pip
-RUN pip install open3d==0.18.0 plyfile pytorch_msssim imageio[ffmpeg] matplotlib lpips
+RUN pip install open3d==0.18.0 plyfile pytorch_msssim imageio[ffmpeg] matplotlib lpips opencv-python mmcv==1.6.0
+RUN apt-get install -y python3-tk
+RUN pip install trimesh pyglet==v1.5.28 omegaconf 
+RUN pip install -U 'sapien>=3.0.0b1'

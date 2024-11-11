@@ -1,5 +1,8 @@
 model:
   max_part_num: 40
+
+optim:
+  loss_mode: "merge_voxel"
   
 train_render_scene_idx: 1
 test_render_scene_idx: 18

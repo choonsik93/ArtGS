@@ -40,6 +40,10 @@ from decomposition.sampler_3d import Sampler3D
 from decomposition.scene_utils import render_training_image_and_label_articulation
 from decomposition.gaussian_renderer import render_label, render_articulation
 
+import open3d as o3d
+from open3d.visualization import rendering
+import math
+
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
 try:
@@ -125,6 +129,7 @@ def part_reconstruction_3d(dataset, opt, hyper, pipe, testing_iterations, saving
     sampler_3d.init_emptiness_from_input(dense_xyz, emptiness_all, time_set, source_idx=source_idx)
     seg_model.time_source = time_set[source_idx]
     source_cam = train_cams[source_idx]
+    target_cam = train_cams[0]
 
     if not viewpoint_stack and not opt.dataloader:
         # dnerf's branch
@@ -133,6 +138,13 @@ def part_reconstruction_3d(dataset, opt, hyper, pipe, testing_iterations, saving
 
     def get_closest_cam_idx(query_time, time_set):
         return min(range(len(time_set)), key=lambda i: abs(time_set[i] - query_time))
+    
+    W, H = source_cam.image_width, source_cam.image_height
+    render_o3d = rendering.OffscreenRenderer(W, H)
+    render_o3d.scene.scene.set_sun_light([-1, -1, -1], [1.0, 1.0, 1.0], 100000)
+    render_o3d.scene.scene.enable_sun_light(False)
+    render_o3d.scene.set_background([1.0, 1.0, 1.0, 1.0])  # RGBA
+    render_o3d.scene.show_axes(False)
 
     test_render_scene_idx = Config.test_render_scene_idx
     train_render_scene_idx = Config.train_render_scene_idx
@@ -171,8 +183,112 @@ def part_reconstruction_3d(dataset, opt, hyper, pipe, testing_iterations, saving
                     gt_image = viewpoint_cam['image'].cuda()
                 gt_images.append(gt_image.unsqueeze(0))
                 time_idx_source.append(get_closest_cam_idx(source_cam.time, time_set))
-                time_idx_target.append(get_closest_cam_idx(viewpoint_cam.time, time_set))
-                
+                time_idx_target.append(get_closest_cam_idx(viewpoint_cam.time, time_set))      
+
+            if iteration % 50 == 0 or iteration == 1:
+                gt_target_redner_pkg = render(target_cam, gaussians, pipe, background, stage=stage, cam_type=scene.dataset_type)
+                xyz_target = gt_target_redner_pkg["means3D"]
+                render_pkg = render_articulation(target_cam, gaussians, pipe, background, seg_model, cam_type=scene.dataset_type)
+                xyz = render_pkg["means3D"]
+                opacity = render_pkg["opacity"]
+                xyz = xyz[opacity[:, 0] > 0.5]
+                xyz_target = xyz_target[opacity[:, 0] > 0.5]
+                vp = target_cam.world_view_transform
+                cam2ego = vp.detach().cpu().numpy().transpose()
+                W, H = target_cam.image_width, target_cam.image_height
+                fov = target_cam.FoVx
+                fx =  W / (2 * math.tan(fov / 2))
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(xyz.detach().cpu().numpy())
+                pcd.paint_uniform_color([0.0, 0.0, 0.0])
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("voxel_grid"):
+                    render_o3d.scene.remove_geometry("voxel_grid")
+                render_o3d.scene.add_geometry("voxel_grid", pcd, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + "_gaussians.png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                pcd = o3d.geometry.PointCloud()
+                canonical_redner_pkg = render(source_cam, gaussians, pipe, background, stage=stage, cam_type=scene.dataset_type)
+                xyz_canonical = canonical_redner_pkg["means3D"]
+                xyz_canonical = xyz_canonical[opacity[:, 0] > 0.5]
+                pcd.points = o3d.utility.Vector3dVector(xyz.detach().cpu().numpy())
+                #pcd.points = o3d.utility.Vector3dVector(xyz_canonical.detach().cpu().numpy())
+                #pcd.paint_uniform_color([0.0, 0.0, 0.0])
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("voxel_grid"):
+                    render_o3d.scene.remove_geometry("voxel_grid")
+                render_o3d.scene.add_geometry("voxel_grid", pcd, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + "_gaussians_canonical.png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=0.05)
+                vis = o3d.visualization.Visualizer()
+                vis.create_window(visible = False)
+                vis.add_geometry(voxel_grid)
+                img = vis.capture_screen_float_buffer(True)
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("voxel_grid"):
+                    render_o3d.scene.remove_geometry("voxel_grid")
+                render_o3d.scene.add_geometry("voxel_grid", voxel_grid, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + ".png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(xyz_target.detach().cpu().numpy())
+                pcd.paint_uniform_color([0.0, 0.0, 0.0])
+                voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=0.05)
+                vis = o3d.visualization.Visualizer()
+                vis.create_window(visible = False)
+                vis.add_geometry(voxel_grid)
+                img = vis.capture_screen_float_buffer(True)
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("voxel_grid"):
+                    render_o3d.scene.remove_geometry("voxel_grid")
+                render_o3d.scene.add_geometry("voxel_grid", voxel_grid, material)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + "_target_voxel.png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("voxel_grid"):
+                    render_o3d.scene.remove_geometry("voxel_grid")
+                render_o3d.scene.add_geometry("voxel_grid", pcd, material)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + "_target_pcd.png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                target_image = render_pkg["render"]
+                save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + "_image.png")
+                torchvision.utils.save_image(target_image, save_path)
+
             image_tensor = torch.cat(images, 0)
             gt_image_tensor = torch.cat(gt_images, 0)
 

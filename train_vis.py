@@ -30,6 +30,10 @@ import lpips
 from utils.scene_utils import render_training_image
 from time import time
 import copy
+import torchvision
+import open3d as o3d
+from open3d.visualization import rendering
+import math
 
 to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
 
@@ -103,7 +107,17 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         viewpoint_stack = temp_list.copy()
     else:
         load_in_memory = False 
-                            # 
+
+    # Set open3d renderer
+    vis_viewpoint = viewpoint_stack[0]
+    target_viewpoint = viewpoint_stack[62]
+    W, H = vis_viewpoint.image_width, vis_viewpoint.image_height
+    render_o3d = rendering.OffscreenRenderer(W, H)
+    render_o3d.scene.scene.set_sun_light([-1, -1, -1], [1.0, 1.0, 1.0], 100000)
+    render_o3d.scene.scene.enable_sun_light(False)
+    render_o3d.scene.set_background([1.0, 1.0, 1.0, 1.0])  # RGBA
+    render_o3d.scene.show_axes(False)
+
     count = 0
     for iteration in range(first_iter, final_iter+1):        
         if network_gui.conn == None:
@@ -180,6 +194,91 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         for viewpoint_cam in viewpoint_cams:
             render_pkg = render(viewpoint_cam, gaussians, pipe, background, stage=stage,cam_type=scene.dataset_type)
             image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+            if iteration % 50 == 0 and stage == "coarse":
+                xyz = gaussians._xyz
+                vp = vis_viewpoint.world_view_transform
+                #cam2ego = torch.linalg.inv(vp).detach().cpu().numpy()
+                cam2ego = vp.detach().cpu().numpy().transpose()
+                W, H = viewpoint_cam.image_width, viewpoint_cam.image_height
+                fov = viewpoint_cam.FoVx
+                fx =  W / (2 * math.tan(fov / 2))
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(xyz.detach().cpu().numpy())
+                pcd.paint_uniform_color([0.0, 0.0, 0.0])
+                vis = o3d.visualization.Visualizer()
+                vis.create_window(visible = False)
+                vis.add_geometry(pcd)
+                img = vis.capture_screen_float_buffer(True)
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("pcd"):
+                    render_o3d.scene.remove_geometry("pcd")
+                render_o3d.scene.add_geometry("pcd", pcd, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + ".png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                render_pkg = render(target_viewpoint, gaussians, pipe, background, stage=stage,cam_type=scene.dataset_type)
+                target_image = render_pkg["render"]
+                save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_target_" + stage + ".png")
+                torchvision.utils.save_image(target_image, save_path)
+            
+            if iteration % 100 == 0 and stage == "fine":
+                xyz = gaussians._xyz
+                vp = vis_viewpoint.world_view_transform
+                #cam2ego = torch.linalg.inv(vp).detach().cpu().numpy()
+                cam2ego = vp.detach().cpu().numpy().transpose()
+                W, H = viewpoint_cam.image_width, viewpoint_cam.image_height
+                fov = viewpoint_cam.FoVx
+                fx =  W / (2 * math.tan(fov / 2))
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(xyz.detach().cpu().numpy())
+                pcd.paint_uniform_color([0.0, 0.0, 0.0])
+
+                material = rendering.MaterialRecord()
+                if render_o3d.scene.has_geometry("pcd"):
+                    render_o3d.scene.remove_geometry("pcd")
+                render_o3d.scene.add_geometry("pcd", pcd, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_" + stage + ".png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                """render_pkg = render(target_viewpoint, gaussians, pipe, background, stage=stage,cam_type=scene.dataset_type)
+                xyz = render_pkg["means3D"]
+                vp_trans = target_viewpoint.world_view_transform
+                cam2ego = vp_trans.detach().cpu().numpy().transpose()
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(xyz.detach().cpu().numpy())
+                pcd.paint_uniform_color([0.0, 0.0, 0.0])
+                if render_o3d.scene.has_geometry("pcd"):
+                    render_o3d.scene.remove_geometry("pcd")
+                material = rendering.MaterialRecord()
+                render_o3d.scene.add_geometry("pcd", pcd, material)
+
+                o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fx, W // 2, H // 2)
+                render_o3d.setup_camera(o3d_intrinsic, cam2ego)
+
+                img = render_o3d.render_to_image()
+                occ_save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_trans_" + stage + ".png")
+                print(f"Saving image to {occ_save_path}")
+                o3d.io.write_image(occ_save_path, img)
+
+                target_image = render_pkg["render"]
+                save_path = os.path.join(args.model_path, "images", '{0:05d}'.format(iteration) + "_target_" + stage + ".png")
+                torchvision.utils.save_image(target_image, save_path)"""
+
             images.append(image.unsqueeze(0))
             if scene.dataset_type!="PanopticSports":
                 gt_image = viewpoint_cam.original_image.cuda()
@@ -244,16 +343,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration, stage)
-
             if dataset.render_process:
                 if (iteration < 1000 and iteration % 10 == 9) \
                     or (iteration < 3000 and iteration % 50 == 49) \
                         or (iteration < 60000 and iteration %  100 == 99) :
                     # breakpoint()
-                        render_training_image(scene, gaussians, [test_cams[0]], render, pipe, background, stage+"test", iteration,timer.get_elapsed_time(),scene.dataset_type)
-                        render_training_image(scene, gaussians, [train_cams[95]], render, pipe, background, stage+"train", iteration,timer.get_elapsed_time(),scene.dataset_type)
-                        #render_training_image(scene, gaussians, [test_cams[iteration%len(test_cams)]], render, pipe, background, stage+"test", iteration,timer.get_elapsed_time(),scene.dataset_type)
-                        #render_training_image(scene, gaussians, [train_cams[iteration%len(train_cams)]], render, pipe, background, stage+"train", iteration,timer.get_elapsed_time(),scene.dataset_type)
+                        render_training_image(scene, gaussians, [test_cams[iteration%len(test_cams)]], render, pipe, background, stage+"test", iteration,timer.get_elapsed_time(),scene.dataset_type)
+                        render_training_image(scene, gaussians, [train_cams[iteration%len(train_cams)]], render, pipe, background, stage+"train", iteration,timer.get_elapsed_time(),scene.dataset_type)
                         # render_training_image(scene, gaussians, train_cams, render, pipe, background, stage+"train", iteration,timer.get_elapsed_time(),scene.dataset_type)
 
                     # total_images.append(to8b(temp_image).transpose(1,2,0))

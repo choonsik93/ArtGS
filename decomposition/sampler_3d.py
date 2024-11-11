@@ -513,7 +513,7 @@ class Sampler3D:
             density_deformed = volume_densities.reshape(B, *grid_shape).transpose(1, 3) # [B, G, G, G]
             
             valid_idx = density_deformed.bool() | emptiness_target
-            loss_3d = self.l2_loss(emptiness_deformed[valid_idx], emptiness_target.float()[valid_idx])
+            loss_3d = self.l1_loss(emptiness_deformed[valid_idx], emptiness_target.float()[valid_idx])
             total_loss = loss_3d
         elif self.loss_mode == "chamfer":
             B = self.batch_size
@@ -551,21 +551,23 @@ class Sampler3D:
         loss_sym = self.sym_loss_weight * decay_factor * self.get_sym_loss(deform_source)
         total_loss += loss_sym"""
 
-        loss_sym = self.sym_loss_weight * decay_factor * self.symreg(model)
+        loss_sym = self.sym_loss_weight * self.symreg(model)
+        total_loss += loss_sym
+        
+        loss_tv = self.tv_deform_loss_weight * model.TV_loss_deform(self.tvreg_s)
+        total_loss += loss_tv
+
+        loss_tv = self.tv_label_loss_weight * model.TV_loss_label(self.tvreg_s)
+        total_loss += loss_tv
+
+        """loss_sym = self.sym_loss_weight * decay_factor * self.symreg(model)
         total_loss += loss_sym
         
         loss_tv = self.tv_deform_loss_weight * decay_factor * model.TV_loss_deform(self.tvreg_s)
         total_loss += loss_tv
 
-        loss_tv = self.tv_label_loss_weight * decay_factor * model.TV_loss_label(self.tvreg_s) #(1.0/decay_factor)**3
-        total_loss += loss_tv
-
-        """if self.step > 5000:
-            loss_tv = self.tv_label_loss_weight * 1000.0 * model.TV_loss_label(self.tvreg_s) 
-            total_loss += loss_tv
-        else:
-            loss_tv = self.tv_label_loss_weight * decay_factor * model.TV_loss_label(self.tvreg_s) #(1.0/decay_factor)**3
-            total_loss += loss_tv"""
+        loss_tv = self.tv_label_loss_weight * decay_factor * model.TV_loss_label(self.tvreg_s)
+        total_loss += loss_tv"""
 
         self.step = self.step + 1
 

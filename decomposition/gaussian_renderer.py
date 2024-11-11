@@ -22,6 +22,8 @@ from PIL import Image, ImageColor
 colormap = sorted(set(ImageColor.colormap.values()))
 color_list = torch.FloatTensor([ImageColor.getrgb(color) for color in colormap[:-1]]).to("cuda") / 255.0
 
+source_cam = None
+
 def feature_to_rgb(features):
     # Input features shape: (16, H, W)
     
@@ -51,7 +53,14 @@ def render_articulation(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch
     
     Background tensor (bg_color) must be on GPU!
     """
- 
+    """global source_cam
+    if source_cam is None:
+        source_cam = viewpoint_camera
+
+    viewpoint_camera_time = viewpoint_camera.time
+    viewpoint_camera = source_cam
+    viewpoint_camera.time = viewpoint_camera_time"""
+
     # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) 
     screenspace_points = torch.zeros_like(pc.get_xyz, dtype=pc.get_xyz.dtype, requires_grad=True, device="cuda") + 0
     try:
@@ -101,25 +110,43 @@ def render_articulation(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch
 
     if source_scene is None:
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = pc._deformation(means3D, scales, rotations, opacity, shs, source_time)
-        means3D_final = means3D_final.detach()
+        """means3D_final = means3D_final.detach()
         scales_final = scales_final.detach()
         rotations_final = rotations_final.detach()
         opacity_final = opacity_final.detach()
-        shs_final = shs_final.detach()
+        shs_final = shs_final.detach()"""
     else:
         means3D_final, scales_final, rotations_final, opacity_final, shs_final = source_scene
-        means3D_final = means3D_final.detach()
+        """means3D_final = means3D_final.detach()
         scales_final = scales_final.detach()
         rotations_final = rotations_final.detach()
         opacity_final = opacity_final.detach()
-        shs_final = shs_final.detach()
+        shs_final = shs_final.detach()"""
 
+    means3D_final_copy = means3D_final.clone()
     target_time = torch.tensor(viewpoint_camera.time).to(means3D.device).repeat(means3D.shape[0], 1)
     means3D_final, rotations_final, _ = seg_model(means3D_final, rotations_final, source_time, target_time, eval=eval)
 
     scales_final = pc.scaling_activation(scales_final)
     rotations_final = pc.rotation_activation(rotations_final)
     opacity = pc.opacity_activation(opacity_final)
+
+    frame_time_source = torch.zeros_like(means3D_final_copy[:, 0:1])
+    label_feat = seg_model.compute_labelfeature(means3D_final_copy, frame_time_source, xyz_normalize=True)
+    _, label_ind = torch.max(label_feat, 1)
+    label_final = torch.eye(label_feat.shape[-1], dtype=label_feat.dtype, device=label_feat.device)[label_ind]
+    label_sort = torch.argsort(torch.sum(label_final, 0), descending=True)
+    max_label = label_sort[2]
+    max_points_idx = label_final[:, max_label] == 1
+    """means3D_final[max_points_idx, 0] += 0.5 * math.cos(2 * math.pi * viewpoint_camera.time)
+    means3D_final[max_points_idx, 1] += 0.5 * math.sin(2 * math.pi * viewpoint_camera.time)
+    means3D_final[max_points_idx, 2] += 0.2 * math.cos(2 * math.pi * viewpoint_camera.time)"""
+
+    """means3D_final = means3D_final[max_points_idx]
+    rotations_final = rotations_final[max_points_idx]
+    opacity = opacity[max_points_idx]
+    scales_final = scales_final[max_points_idx]
+    shs_final = shs_final[max_points_idx]"""
 
     colors_precomp = None
     if override_color is None:
@@ -148,7 +175,9 @@ def render_articulation(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch
             "viewspace_points": screenspace_points,
             "visibility_filter" : radii > 0,
             "radii": radii,
-            "depth": depth}
+            "depth": depth,
+            "means3D": means3D_final,
+            "opacity": opacity,}
 
 
 def render_label(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch.Tensor, seg_model, eval=False,
@@ -216,6 +245,7 @@ def render_label(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch.Tensor
     means3D_final_copy = means3D_final.clone()
     scales_final = scales_final.detach()
     rotations_final = rotations_final.detach()
+    rotations_final_copy = rotations_final.clone()
     opacity_final = opacity_final.detach()
     shs_final = shs_final.detach()
     
@@ -250,6 +280,10 @@ def render_label(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch.Tensor
         label_feat = seg_model.compute_labelfeature(means3D_final_copy, frame_time_source, xyz_normalize=True)
         _, label_ind = torch.max(label_feat, 1)
         label_final = torch.eye(label_feat.shape[-1], dtype=label_feat.dtype, device=label_feat.device)[label_ind]
+        label_sort = torch.argsort(torch.sum(label_final, 0), descending=True)
+        max_label = label_sort[1]
+        max_points_idx = label_final[:, max_label] == 1
+        #means3D_final[max_points_idx, 2] += 0.5
         
         """colors_precomp = label_final[:, 0:3]
         shs_final = None
@@ -331,6 +365,15 @@ def render_label(viewpoint_camera, pc:GaussianModel, pipe, bg_color:torch.Tensor
                 scales=scales_final,
                 rotations=rotations_final,
                 cov3D_precomp=cov3D_precomp)
+            """rendered_image, radii, depth = rasterizer(
+                means3D=means3D_final_copy,
+                means2D=means2D,
+                shs=shs_final,
+                colors_precomp=colors_precomp,
+                opacities=opacity,
+                scales=scales_final,
+                rotations=rotations_final_copy,
+                cov3D_precomp=cov3D_precomp)"""
             rendered_image_set.append(rendered_image)
             
         rendered_image = torch.cat(rendered_image_set, 0)

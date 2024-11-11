@@ -1,8 +1,5 @@
 model:
   max_part_num: 40
   
-optim:
-  group_merge_threshold: 0.005
-  
 train_render_scene_idx: 0
 test_render_scene_idx: 18

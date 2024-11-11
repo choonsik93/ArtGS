@@ -45,7 +45,8 @@ class Model_Config:
     time_grid_final: int = 64 #24
     voxel_grid_init: int = 64 #200 #64
     voxel_grid_final: int = 200
-    upsample_list: List[int] = field(default_factory=lambda: [1000, 2000, 3000]) #List[int] = field(default_factory=lambda: [1000, 2000, 3000])
+    #upsample_list: List[int] = field(default_factory=lambda: [1000, 2000, 3000]) #List[int] = field(default_factory=lambda: [1000, 2000, 3000])
+    upsample_list: List[int] = field(default_factory=lambda: [])
 
 @dataclass
 class Optim_Config:
@@ -62,7 +63,7 @@ class Optim_Config:
     lr_decay_target_ratio: float = 0.01 #0.01
     ############################### 0.01
     lr_decay_step: int = -1
-    lr_decay_ratio: float = 0.1
+    lr_decay_ratio: float = 0.01
     lr_upsample_reset: bool = True
 
     gumbel: bool = False
@@ -75,29 +76,32 @@ class Optim_Config:
     loss_mode: str = "voxel"
     adj_loss_version: int = 5
 
-    batch_size: int = 1
-    n_iters: int = 10000
+    batch_size: int = 4
+    n_iters: int = 2500
     ### original 10000
 
     sym_loss_weight: float = 1e-4
-    tv_label_loss_weight: float = 1e-4 #1e-6 # 0.1# 0.0001 # voxel for 0.1
+    tv_label_loss_weight: float = 1e-2 #5e-3 #1e-4 #1e-6 # 0.1# 0.0001 # voxel for 0.1
     ###################################### 1e-4
     tv_deform_loss_weight: float = 1e-4 # 1e-5
     recon_loss_weight: float = 1e-4
     diag_loss_weight: float = 0.0001
-    nst_loss_weight: float = 0.01 #1.0 #1 #0.0001 #1.0 #001 #1.0
+    nst_loss_weight: float = 0.0 #0.01 #1.0 #1 #0.0001 #1.0 #001 #1.0
     ######################################### 0.001!!!!!!!!
     ### original value is 0.01 and adj_loss_version: 5
     ### o.1 is not bad
     num_nst_points: int = 30 #10
-    ######################### 50
+    ######################### 
 
     shrink_num_thresold: int = 30 # 10
     #shrink_list: List[int] = field(default_factory=lambda: [11000]) #field(default_factory=lambda: [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000])
-    shrink_list: List[int] = field(default_factory=lambda: [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000])
-    #shrink_list: List[int] = field(default_factory=lambda: [4000, 6000])
-    group_merge_threshold: float = 0.01
-    group_merge_list: List[int] = field(default_factory=lambda: [3000, 4000, 5000, 6000, 7000, 8000])
+    #shrink_list: List[int] = field(default_factory=lambda: [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000])
+    shrink_list: List[int] = field(default_factory=lambda: [1000, 2000])
+    #shrink_list: List[int] = field(default_factory=lambda: [])
+    group_merge_threshold: float = 0.001
+    #group_merge_list: List[int] = field(default_factory=lambda: [2500, 3000, 4000, 5000, 6000, 7000, 8000])
+    group_merge_list: List[int] = field(default_factory=lambda: [1100, 2100])
+    #group_merge_list: List[int] = field(default_factory=lambda: [])
     
     one_source: bool = True
     logfolder: str = "test"

@@ -30,19 +30,35 @@ build-image:
 	-t artgs:v0 .
 	docker run -d --gpus all -it --rm --net=host \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
-	-v "${PWD}":/home/appuser/ArtGS \
-	-w /home/appuser/ArtGS \
+	-v "${PWD}":/workspace/ArtGS \
+	-w /workspace/ArtGS \
 	-e DISPLAY=$DISPLAY \
 	--name=artgs \
 	--ipc=host artgs:v0
-	docker exec -it socc sh -c "pip install -e submodules/depth-diff-gaussian-rasterization"
-	docker exec -it socc sh -c "pip install -e submodules/simple-knn"
+	docker exec -it artgs sh -c "pip install -e submodules/depth-diff-gaussian-rasterization"
+	docker exec -it artgs sh -c "pip install -e submodules/simple-knn"
+	docker exec -it artgs sh -c "FORCE_CUDA=1 pip install -v "git+https://github.com/facebookresearch/pytorch3d.git@stable""
 	docker commit artgs artgs:latest
+	docker stop artgs
 
 run:
 	docker run -it --rm -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=$(DISPLAY) -e USER=$(USER) \
 	-e runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
-	-v "${PWD}":/home/appuser/ArtGS \
-	-w /home/appuser/ArtGS \
+	-v "${PWD}":/workspace/ArtGS \
+	-w /workspace/ArtGS \
 	--shm-size 8G \
 	--net host --gpus all --privileged --name artgs artgs:latest /bin/bash
+
+exec:
+	docker run -d -it --rm -v /tmp/.X11-unix:/tmp/.X11-unix -e DISPLAY=$(DISPLAY) -e USER=$(USER) \
+	-e runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all -e NVIDIA_VISIBLE_DEVICES=all \
+	-v "${PWD}":/workspace/ArtGS \
+	-w /workspace/ArtGS \
+	--shm-size 8G \
+	--net host --gpus all --privileged --name artgs artgs:latest /bin/bash
+
+# ffmpeg -framerate 25 -i %05d_trans_fine.png -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p output.mp4
+# ffmpeg -framerate 25 -pattern_type glob -i '*.jpg' -c:v libx264 -r 30 -pix_fmt yuv420p output.mp4
+# ffmpeg -framerate 25 -pattern_type glob -i '*_trans_fine.png' -c:v libx264 -r 30 -pix_fmt yuv420p output.mp4
+# ffmpeg -framerate 25 -i %05d.png -c:v libx264 -profile:v high -crf 20 -pix_fmt yuv420p output.mp4
+# sudo chown -R $USER: $HOME
