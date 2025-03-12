@@ -1,4 +1,4 @@
-# Unsupervised 3D Part Decomposition via Leveraged Gaussian Splatting
+# Unsupervised 3D Part Decomposition via Leveraged Gaussian Splatting - IROS2024
 JaeGoo Choy, Geonho Cha, Hogun Kee, Songhwai Oh<br>
 [Project](https://choonsik93.github.io/artnerf/) | [Full Paper](https://github.com/choonsik93/artnerf/blob/master/static/pdfs/2024_iros_u3dpd.pdf) | [Video](https://youtu.be/4B10ItDZNK0?si=KAZPVlScu1L7_YTB) 
 
