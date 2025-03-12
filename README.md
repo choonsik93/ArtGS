@@ -42,7 +42,7 @@ sh examples/run_dnerf_seg.sh {target D-NeRF scene name}
 
 ## Visualization
 
-After training is finished, you can visualize segmentation results by running
+After training is finished, you can visualize the results by running
 ```
 python render_seg.py --model_path "output/dnerf/{target D-NeRF scene name}/" --skip_train --configs arguments/dnerf/{target D-NeRF scene name}.py
 ```
