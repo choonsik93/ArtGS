@@ -22,13 +22,27 @@ The dataset provided in [D-NeRF](https://github.com/albertpumarola/D-NeRF) is us
 
 ## Training
 
-For training synthetic scenes such as `bouncingballs`, run
+For training D-NeRF synthetic scenes, run
+```
+python train.py -s data/dnerf/{target D-NeRF scene name} --expname "dnerf/{target D-NeRF scene name}" --configs arguments/dnerf/{target D-NeRF scene name}.py 
+python train_seg.py -s data/dnerf/{target D-NeRF scene name} --expname "dnerf/{target D-NeRF scene name}" --configs arguments/dnerf/{target D-NeRF scene name}.py --decomp_configs config/dnerf/{target D-NeRF scene name}.yaml
+```
 
+For example, when the target D-NeRF scene name is bouncingballs, run
 ```
 python train.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --configs arguments/dnerf/bouncingballs.py 
+python train_seg.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --configs arguments/dnerf/bouncingballs.py --decomp_configs config/dnerf/bouncingballs.yaml
 ```
 
+Or simply run,
 ```
-python generate_mesh.py -s data/dnerf/bouncingballs --expname "dnerf/bouncingballs" --model_path "output/dnerf/bouncingballs"
-python render.py -m <path to pre-trained model> -s <path to COLMAP dataset> 
+sh examples/run_dnerf_seg.sh {target D-NeRF scene name}
+```
+
+
+## Visualization
+
+After training is finished, you can visualize segmentation results by running
+```
+python render_seg.py --model_path "output/dnerf/{target D-NeRF scene name}/" --skip_train --configs arguments/dnerf/{target D-NeRF scene name}.py
 ```
